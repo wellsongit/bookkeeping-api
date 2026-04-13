@@ -1,14 +1,16 @@
 {
   "name": "bookkeeping-api",
   "version": "1.0.0",
-  "description": "",
+  "description": "Finance API - JSON Storage Edition",
   "main": "server.js",
   "scripts": {
+    "build": "echo '✅ Node.js API - No build required!' && echo '📦 Installing production dependencies...' && npm ci --only=production && echo '🚀 Ready for production!'",
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "prod": "pm2 start server.js --name api",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["finance", "api", "json", "bookkeeping"],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -17,12 +19,10 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^6.10.0",
-    "helmet": "^7.0.0",
-    "jsonwebtoken": "^9.0.3",
-    "mongodb": "^7.1.1",
-    "mongoose": "^7.5.0"
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.1.4"
   }
 }
