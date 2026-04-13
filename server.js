@@ -3,7 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -11,81 +12,38 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// ✅ MongoDB connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => {
-    console.error(err);
-    process.exit(1);
-  });
+// Data storage
+const DATA_DIR = './data';
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
-/* ================= MODELS ================= */
-
-const User = mongoose.model('User', new mongoose.Schema({
-  email: { type: String, unique: true },
-  password: String,
-  name: String
-}));
-
-const Account = mongoose.model('Account', new mongoose.Schema({
-  user_id: mongoose.Schema.Types.ObjectId,
-  name: String,
-  type: String,
-  balance: { type: Number, default: 0 }
-}));
-
-const Transaction = mongoose.model('Transaction', new mongoose.Schema({
-  user_id: mongoose.Schema.Types.ObjectId,
-  account_id: mongoose.Schema.Types.ObjectId,
-  type: String,
-  category: String,
-  amount: Number,
-  description: String,
-  date: { type: Date, default: Date.now }
-}));
-
-/* ================= ROUTES ================= */
-
-// Health
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'API LIVE 🚀' });
-});
-
-// Register
-app.post('/api/auth/register', async (req, res) => {
-  const { email, password, name } = req.body;
-
-  const existing = await User.findOne({ email });
-  if (existing) return res.status(400).json({ error: 'User exists' });
-
-  const hashed = await bcrypt.hash(password, 12);
-
-  const user = await User.create({ email, password: hashed, name });
-
-  const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-  res.json({ token, user });
-});
-
-// Login
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  const user = await User.findOne({ email });
-  if (!user || !(await bcrypt.compare(password, user.password))) {
-    return res.status(400).json({ error: 'Invalid credentials' });
+const readDB = (file) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), 'utf8') || '[]');
+  } catch {
+    return [];
   }
+};
 
-  const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+const writeDB = (file, data) => {
+  fs.writeFileSync(path.join(DATA_DIR, file), JSON.stringify(data, null, 2));
+};
 
-  res.json({ token, user });
+// Routes
+app.get('/', (req, res) => {
+  res.json({ 
+    message: '🚀 Finance API LIVE!', 
+    endpoints: ['/api/auth/register', '/api/auth/login', '/api/accounts', '/api/transactions'],
+    storage: 'JSON Files ✅'
+  });
 });
+
+app.get('/api/health', (req, res) => res.json({ status: 'OK', message: 'API LIVE 🚀' }));
 
 // Auth middleware
 const authenticateToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
-
+  
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid token' });
     req.user = user;
@@ -93,50 +51,88 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Accounts
-app.get('/api/accounts', authenticateToken, async (req, res) => {
-  const data = await Account.find({ user_id: req.user.userId });
-  res.json(data);
+// REGISTER
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    let users = readDB('users.json');
+    
+    if (users.find(u => u.email === email)) 
+      return res.status(400).json({ error: 'User exists' });
+    
+    const hashed = await bcrypt.hash(password, 12);
+    const user = { 
+      id: Date.now().toString(), 
+      email, 
+      password: hashed, 
+      name 
+    };
+    users.push(user);
+    writeDB('users.json', users);
+    
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, email, name } });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.post('/api/accounts', authenticateToken, async (req, res) => {
-  const { name, type, balance = 0 } = req.body;
+// LOGIN
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const users = readDB('users.json');
+    const user = users.find(u => u.email === email);
+    
+    if (!user || !(await bcrypt.compare(password, user.password))) 
+      return res.status(400).json({ error: 'Invalid credentials' });
+    
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-  const account = await Account.create({
+// ACCOUNTS
+app.get('/api/accounts', authenticateToken, (req, res) => {
+  const accounts = readDB('accounts.json').filter(a => a.user_id === req.user.userId);
+  res.json(accounts);
+});
+
+app.post('/api/accounts', authenticateToken, (req, res) => {
+  const accounts = readDB('accounts.json');
+  const account = { 
+    id: Date.now().toString(),
     user_id: req.user.userId,
-    name,
-    type,
-    balance
-  });
-
+    ...req.body 
+  };
+  accounts.push(account);
+  writeDB('accounts.json', accounts);
   res.status(201).json(account);
 });
 
-// Transactions
-app.get('/api/transactions', authenticateToken, async (req, res) => {
-  const data = await Transaction.find({ user_id: req.user.userId }).sort({ date: -1 });
-  res.json(data);
+// TRANSACTIONS
+app.get('/api/transactions', authenticateToken, (req, res) => {
+  const transactions = readDB('transactions.json').filter(t => t.user_id === req.user.userId);
+  res.json(transactions);
 });
 
-app.post('/api/transactions', authenticateToken, async (req, res) => {
-  const { accountId, type, category, amount, description } = req.body;
-
-  const tx = await Transaction.create({
+app.post('/api/transactions', authenticateToken, (req, res) => {
+  const transactions = readDB('transactions.json');
+  const transaction = { 
+    id: Date.now().toString(),
     user_id: req.user.userId,
-    account_id: accountId,
-    type,
-    category,
-    amount,
-    description
-  });
-
-  res.status(201).json(tx);
+    ...req.body 
+  };
+  transactions.push(transaction);
+  writeDB('transactions.json', transactions);
+  res.status(201).json(transaction);
 });
-
-/* ================= SERVER ================= */
 
 const PORT = process.env.PORT || 5000;
-
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`✅ JSON storage - No database needed!`);
+  console.log(`📱 Test: http://localhost:${PORT}/api/health`);
 });
